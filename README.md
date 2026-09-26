@@ -1,451 +1,152 @@
-# Autobricks Log
+# Autobricks Log · Autobricks True Log
 
-Autobricks Log is an audit-oriented logging service built on the
-[Autobricks WORM filesystem](https://github.com/pregene/autobricks-worm).
+Autobricks는 [WORM 저장소](https://github.com/pregene/autobricks-worm)를 기반으로 로그를 보관합니다. **Autobricks Log**는 기존 syslog 메시지를 프로그램별로 수집·보관하고, **Autobricks True Log**는 연속 체크섬 체인과 쓰기 영수증을 통해 애플리케이션의 기록 전후 상태를 확인할 수 있도록 합니다.
 
-The service accepts local syslog messages, separates them by program name,
-protects stored bytes against modification, and removes expired files according
-to the system-wide retention period selected during installation.
+| 사용 목적 | 제품 | 안내 |
+| --- | --- | --- |
+| 기존 syslog 로그를 프로그램별 일별 파일로 보관하고 무결성 확인 | Autobricks Log | [설치](INSTALL.md) · [사용법](HOWTO.md) |
+| 애플리케이션 기록을 체크섬 체인으로 관리하고 원격 쓰기 영수증 수신 | Autobricks True Log | [설치 및 사용 통합 안내](TRUELOG.md) |
 
-## Goals
+## Autobricks Log
 
-- Accept messages from applications through the standard system syslog API.
-- Create and manage one directory for each syslog program name.
-- Create one `ablog-YYYY-MM-DD.log` file per program and local calendar day.
-- Make committed bytes append-only through the WORM storage layer.
-- Verify file integrity and retain files for a fixed period.
-- Delete expired files without giving producers deletion permission.
-- Continue safely across process restarts and partial failures.
-- Keep credentials and machine-specific data out of the repository.
+Autobricks Log는 애플리케이션이 운영체제의 표준 syslog API로 보낸 메시지를 rsyslog를 통해 수집합니다. rsyslog에서 지정한 프로그램의 메시지만 저장하며, 프로그램마다 일별 로그 파일을 관리합니다.
 
-This project is not intended to replace a general-purpose observability stack,
-provide full-text search, or accept arbitrary client-selected paths.
-
-## Architecture
-
-```mermaid
-flowchart LR
-    App["application / syslog(3)"] --> Syslog["system syslog socket"]
-    Syslog --> Rsyslog["rsyslog filter + action queue"]
-    Rsyslog -->|"program name + confirmed handoff"| Ingest["autobricks-log ingest"]
-    Ingest --> Writer["program directory + append writer"]
-    Writer --> Mount["Autobricks WORM mount"]
-    Mount --> Store["backing storage"]
-    Cleaner["retention janitor"] --> Mount
-    Verify["integrity verifier"] --> Mount
-```
-
-- Applications use the normal `syslog(3)` interface and require no
-  Autobricks-specific logging library.
-- rsyslog owns system-log reception, filtering, buffering, and delivery.
-- Autobricks Log owns program-name validation, file creation, durable writes, and the
-  success or failure response returned to rsyslog.
-- Autobricks WORM owns append-only enforcement, integrity metadata, and the
-  rule that a file cannot be deleted before its retention deadline.
-- A janitor enumerates only managed files and requests deletion after expiry.
-  The WORM layer remains the final authority.
-- Applications cannot select a storage path, change the system-wide retention,
-  or delete files.
-
-The inherited filesystem documentation is retained in
-[docs/WORM_README.md](docs/WORM_README.md).
-
-Autobricks Log installs one executable named `ablog`. Its service and operator
-functions are selected with subcommands:
+- 기존 애플리케이션의 표준 syslog 인터페이스를 사용할 수 있습니다.
+- 프로그램 이름, facility, severity 조건으로 저장할 메시지를 선택할 수 있습니다.
+- 저장된 바이트는 WORM 인터페이스를 통해 덮어쓰거나 보존 기한 전에 삭제할 수 없습니다.
+- 파일 무결성을 확인하고 보존 기한이 지난 파일을 정리합니다.
+- rsyslog의 디스크 큐와 메시지별 확인 응답을 통해 저장 실패 시 재시도를 지원합니다.
 
 ```text
-ablog mount ...
-ablog unmount ...
-ablog ingest PROGRAM
-ablog daemon
-ablog check
-ablog verify PROGRAM
+애플리케이션 → syslog → rsyslog 필터·큐 → Autobricks Log → WORM 저장소
 ```
 
-The Debian package does not install separate ingest, daemon, control, or WORM
-executables.
+### 패키지와 사용 예시
 
-## Version policy
+기존 Log 배포판의 패키지명은 `autobricks-log`, 실행 명령은 `ablog`입니다.
 
-Development started at version `0.2.8`. Increase the patch component after
-every successful official build or test run. A failed build or failed test does
-not change the version. `./build.sh` performs the successful-build increment
-automatically. `./test.sh --locked` runs the Autobricks Log test target and
-applies the same rule after a successful test run. The inherited WORM project's
-own regression tests remain separate from the Autobricks Log integration
-workflow. Direct Cargo commands are low-level operations and do not update the
-version files; use the project entry points for recorded builds and tests.
-
-## Storage policy
-
-Installation sets two storage values for the entire service:
+rsyslog에서 `example-service` 프로그램을 전달하도록 설정한 뒤 메시지를 전송합니다.
 
 ```sh
-AB_WORM_SOURCE_PATH=/worm-storage
-AB_WORM_RETAIN_DAYS=365
-AB_WORM_MOUNT_PATH=/mnt/worm-storage
+logger --tag example-service --priority local0.notice 'policy decision completed'
 ```
 
-Autobricks WORM mounts `source` at the fixed Autobricks Log mount point. Every
-program and every file under that mount uses the same retention period. Programs
-cannot override either value in a syslog message.
-
-## Application interface
-
-Applications use the operating system's standard syslog interface:
-
-```c
-#include <syslog.h>
-
-openlog("example-service", LOG_PID, LOG_LOCAL0);
-syslog(LOG_NOTICE, "policy decision completed");
-closelog();
-```
-
-rsyslog receives the message from the system log socket and applies its
-configured filter. The Autobricks Log template uses rsyslog's local receive
-time and formats each line as `YYYY-MM-DDTHH:MM:SS.NNN HOST TAG MESSAGE`.
-Autobricks Log uses the configured program argument only to select the
-directory and stores the formatted syslog line without rewriting it.
-
-The audit path uses rsyslog's program output integration with per-message
-confirmation. Autobricks Log confirms a message only after its WORM data and
-metadata reach the configured durability boundary. A negative response leaves
-the message in rsyslog's action queue for retry. A dedicated disk-backed action
-queue isolates an unavailable logger from unrelated rsyslog destinations.
-
-Unix-socket forwarding is also available for best-effort workloads, but socket
-delivery alone does not prove that the message was committed to WORM storage.
-
-## rsyslog program filtering
-
-Autobricks Log receives only messages selected by rsyslog. The default policy is
-an explicit program allowlist, not `*.*` forwarding.
-
-`openlog()` supplies the syslog tag. rsyslog extracts its static program portion
-as the `programname` property:
-
-```c
-openlog("example-service", LOG_PID, LOG_LOCAL0);
-```
-
-The exact-match filter is:
+저장 경로는 다음과 같습니다.
 
 ```text
-module(load="omprog")
-
-template(name="AutobricksLogFileFormat" type="list") {
-    property(name="timegenerated" dateFormat="year")
-    constant(value="-")
-    property(name="timegenerated" dateFormat="month")
-    constant(value="-")
-    property(name="timegenerated" dateFormat="day")
-    constant(value="T")
-    property(name="timegenerated" dateFormat="hour")
-    constant(value=":")
-    property(name="timegenerated" dateFormat="minute")
-    constant(value=":")
-    property(name="timegenerated" dateFormat="second")
-    constant(value=".")
-    property(name="timegenerated" dateFormat="subseconds" position.from="1" position.to="3")
-    constant(value=" ")
-    property(name="hostname")
-    constant(value=" ")
-    property(name="syslogtag")
-    property(name="msg" spIfNo1stSp="on" dropLastLf="on")
-    constant(value="\n")
-}
-
-if $programname == "example-service" then {
-    action(
-        type="omprog"
-        name="autobricks_log"
-        binary="/usr/bin/ablog ingest example-service"
-        template="AutobricksLogFileFormat"
-        confirmMessages="on"
-        confirmTimeout="30000"
-        killUnresponsive="on"
-        action.resumeRetryCount="-1"
-        action.resumeInterval="5"
-        queue.type="Disk"
-        queue.filename="autobricks_log"
-        queue.maxDiskSpace="1g"
-        queue.saveOnShutdown="on"
-        queue.syncQueueFiles="on"
-    )
-}
+/mnt/worm-storage/example-service/ablog-YYYY-MM-DD.log
 ```
 
-Messages from other programs do not enter this action and do not create a
-directory under `/mnt/worm-storage`.
-
-Multiple programs are allowlisted with explicit equality conditions:
-
-```text
-if $programname == "example-service"
-   or $programname == "example-worker" then {
-    # Autobricks Log action
-}
-```
-
-Facility and severity can further restrict the selection:
-
-```text
-if ($programname == "example-service"
-    or $programname == "example-worker")
-   and $syslogfacility-text == "local0"
-   and $syslogseverity <= 5 then {
-    # Autobricks Log action
-}
-```
-
-Syslog severity uses `0` for `emerg` through `7` for `debug`, so `<= 5`
-accepts `notice` and every more severe message. Facility names include
-`local0` through `local7` as well as standard names such as `daemon`, `auth`,
-and `cron`.
-
-rsyslog processes rules from top to bottom. With no `stop` after the action, a
-selected message continues into later rules and can also remain in the host's
-normal logs. Add `stop` only when Autobricks Log must be the final destination:
-
-```text
-if $programname == "example-service" then {
-    # Autobricks Log action
-    stop
-}
-```
-
-Validate every change before reloading rsyslog:
+서버에서 설치 상태와 파일 무결성을 확인합니다.
 
 ```sh
-sudo rsyslogd -N1
-sudo systemctl reload rsyslog.service
+sudo ablog check
+sudo ablog verify example-service
 ```
 
-`programname` is suitable for routing but is not strong application
-authentication: another local process can submit the same tag. When the filter
-is a security boundary, combine it with trusted local-input properties obtained
-by rsyslog, such as the sender UID, GID, PID, and executable identity. Autobricks
-Log independently validates the received program name before using it as a
-directory component.
+전체 rsyslog 설정과 운영 방법은 [HOWTO.md](HOWTO.md), 패키지 설치는 [INSTALL.md](INSTALL.md)를 참고하세요. 애플리케이션의 `syslog()` 호출 성공 자체가 최종 저장 확인을 뜻하지는 않습니다.
 
-### Route only sshd logs to Autobricks Log
+## Autobricks True Log
 
-On Ubuntu, create `/etc/rsyslog.d/30-autobricks-log-sshd.conf` with the following
-content:
+Autobricks True Log는 로그를 연속된 체크섬 체인으로 관리합니다. 애플리케이션은 클라이언트로 기록을 보내고, 서버가 저장 내구성 경계를 완료한 뒤 반환하는 **쓰기 전후의 파일명·크기·체크섬**을 받을 수 있습니다.
+
+- 프로그램별 체크섬 체인을 일별 파일 회전 이후에도 이어갑니다.
+- 쓰기 전후의 체크포인트를 영수증으로 반환합니다.
+- 업무 이벤트 ID와 영수증을 함께 저장하여 애플리케이션 기록과 로그를 연결할 수 있습니다.
+- TCP 또는 mTLS 연결로 원격 서버에 로그를 전달합니다.
+- 클라이언트 데몬이 연결과 인증서를 관리하므로 애플리케이션은 로컬 명령으로 기록합니다.
+- 서버에서 현재 체인 상태, 봉인된 파일 이력, 보관 중인 파일의 체인 무결성을 조회합니다.
+- 기존 syslog·rsyslog 연동도 사용할 수 있습니다.
 
 ```text
-module(load="omprog")
-
-# Define AutobricksLogFileFormat exactly as shown in the preceding example.
-
-if $programname == "sshd" then {
-    action(
-        type="omprog"
-        name="autobricks_log_sshd"
-        binary="/usr/bin/ablog ingest sshd"
-        template="AutobricksLogFileFormat"
-        confirmMessages="on"
-        confirmTimeout="30000"
-        killUnresponsive="on"
-        action.resumeRetryCount="-1"
-        action.resumeInterval="5"
-        queue.type="Disk"
-        queue.filename="autobricks_log_sshd"
-        queue.maxDiskSpace="1g"
-        queue.saveOnShutdown="on"
-        queue.syncQueueFiles="on"
-    )
-    stop
-}
+애플리케이션 / Express
+  → ab-truelog-cli write
+  → 클라이언트 데몬
+  → TCP 또는 mTLS
+  → RPC 서비스
+  → True Log · WORM 저장소
 ```
 
-The `30-` prefix places this rule before Ubuntu's common
-`/etc/rsyslog.d/50-default.conf`. The `stop` statement prevents matched `sshd`
-messages from continuing into later rules, so Autobricks Log replaces the later
-rsyslog destinations for those messages. Remove `stop` when the same messages
-must also remain in the normal authentication log.
+### 서버와 클라이언트
 
-Validate and activate the rule:
+| 구성 | 패키지 | 역할 |
+| --- | --- | --- |
+| 서버 | `autobricks-truelog` | WORM 저장소, 로그 기록, 체크섬 체인 및 영수증 관리 |
+| 클라이언트 | `autobricks-truelog-cli` | 로컬 애플리케이션 요청을 서버로 전달하고 영수증 반환 |
+
+서버의 `ab-truelog.service`가 WORM과 로깅을 함께 관리합니다. 원격 접속은 별도 `ab-truelog-rpc.service`가 담당하며, 클라이언트는 애플리케이션 머신의 `ab-truelog-cli.service`로 실행됩니다.
+
+TCP/mTLS 모드와 서버 주소·포트는 설치 시 설정합니다. mTLS에서는 서버의 Pairing Code로 클라이언트를 등록합니다. 코드는 입력 중 화면에 표시되고, 하이픈 없이 숫자 8자리로 입력할 수도 있습니다.
+
+### 로그 쓰기
+
+클라이언트 설치와 실행 계정 권한 설정을 마친 뒤 다음과 같이 사용합니다.
 
 ```sh
-sudo rsyslogd -N1
-sudo systemctl restart rsyslog.service
+ab-truelog-cli write --service example-service \
+  --data '{"event_id":"example-event-001","action":"policy-update"}'
 ```
 
-An actual SSH authentication event is stored under:
+쓰기 명령에 sudo나 `--hostname`을 넣지 않습니다. 클라이언트 데몬이 설치 시 설정한 hostname을 사용합니다. Express 등 다른 계정으로 실행되는 애플리케이션에는 해당 **실행 계정**의 클라이언트 소켓 권한이 필요합니다.
+
+영수증에는 다음 정보가 포함됩니다.
 
 ```text
-/mnt/worm-storage/sshd/ablog-YYYY-MM-DD.log
+hostname, service
+before.file, before.filesize, before.checksum
+after.file, after.filesize, after.checksum
 ```
 
-Other program names do not match this rule and do not enter Autobricks Log.
-For a routing-only test, `logger --tag sshd` can generate a matching tag, but it
-does not prove that the sender was the real SSH daemon. Production authorization
-must use rsyslog trusted sender properties in addition to `programname` when
-that distinction is required.
+애플리케이션은 이벤트 ID와 영수증 전체를 보관할 수 있습니다. 타임아웃이나 연결 끊김에서는 서버에 저장된 뒤 응답만 유실됐을 수도 있으므로, 무조건 재전송하지 말고 기록을 대조해야 합니다. 클라이언트는 불확실한 쓰기를 자동 재전송하지 않으며, 이벤트 ID 자체가 자동 중복 제거를 제공하지는 않습니다.
 
-## File layout
+새 일별 파일의 경로는 다음과 같습니다.
 
 ```text
-<mount>/<program>/ablog-YYYY-MM-DD.log
+/mnt/worm-storage/example-service/truelog-YYYY-MM-DD.log
 ```
 
-Example:
-
-```text
-/mnt/worm-storage/example-service/ablog-2026-09-25.log
-```
-
-The `program` component comes from rsyslog's normalized program name. Autobricks
-Log accepts only a restricted filename-safe form and rejects path separators,
-`.` and `..`; it never uses message text as a path.
-
-`openlog()` itself does not transmit an event. The daily file is therefore
-created when the first message for that program arrives on that local calendar
-day. Its name uses logger local time, not a producer-supplied timestamp. Later
-messages from the same program are appended to the same daily file. Restarting
-rsyslog or `ablog ingest` on the same day reopens that file and continues at its
-WORM append boundary; the first message after local midnight opens the next
-day's file.
-
-Only one daemon instance owns the mount. Startup acquires an exclusive lock,
-validates existing WORM metadata, and refuses unsafe recovery if metadata and
-content disagree.
-
-## Record format
-
-Each physical file contains one syslog file record per line. The timestamp is
-rsyslog's high-resolution local receive time, truncated to milliseconds. No
-UTC conversion, timezone suffix, PRI prefix, or protocol version is added:
-
-```text
-2026-09-25T21:34:56.123 host example-service[42]: policy completed
-```
-
-The omprog line protocol supplies the record boundary. Invalid program names,
-empty records, non-UTF-8 input, and messages over the configured size limit are
-rejected before anything is appended. No JSON conversion or
-Autobricks-specific envelope is added. WORM metadata provides the checksum.
-WORM `.meta` sidecars remain in the root-only backing `SOURCE`, but the mounted
-log namespace omits them from directory listings and denies direct access to
-ordinary log users. Only the WORM service identity and root can access them for
-cleanup and integrity verification.
-
-## Retention and cleanup
-
-One retention period applies to the complete WORM mount and is assigned when
-each file is created. Applications and individual program directories cannot
-change it. Changing the installation setting affects newly created files;
-existing files keep their original deadlines.
-
-The retention manager periodically:
-
-1. enumerates only validated program directories and `ablog-*.log` files;
-2. verifies that each path remains below the storage root;
-3. validates WORM metadata;
-4. requests deletion only after the retention deadline;
-5. reports cleanup failures through the service log.
-
-It must not recursively delete unknown directories or infer targets from
-untrusted filenames. Cleanup is idempotent and resumes after a restart.
-
-## Delivery and failure semantics
-
-Applications complete their normal `syslog()` call according to the operating
-system's syslog behavior; this is not an end-to-end durable-write confirmation.
-Reliability between rsyslog and Autobricks Log is managed by a dedicated action
-queue and per-message acknowledgement.
-
-On overload, disk full, verification failure, or permission failure, the
-integration returns a negative acknowledgement. rsyslog retains and retries the
-message according to the action policy instead of treating it as stored.
-Queue capacity, disk usage, retry state, discarded messages, and suspended
-actions are monitored explicitly.
-
-## Security model
-
-The initial trust boundary is a single host:
-
-- The daemon and WORM service run under dedicated identities.
-- Applications receive no access to Autobricks Log sockets or storage.
-- rsyslog is the only local identity permitted to invoke the ingestion path.
-- rsyslog supplies the normalized program name used for directory selection.
-- The WORM backing directory is inaccessible to producers.
-- Installation storage and retention changes require administrative authorization.
-- File creation uses descriptor-relative operations and rejects symlink races.
-- Message size, field count, field length, and queue use are bounded.
-- Logs must not contain service credentials; secret filtering remains primarily
-  a producer and deployment responsibility.
-
-WORM storage protects against ordinary overwrite and premature deletion through
-the mounted interface. It does not by itself protect against an administrator
-who can directly alter the backing store, kernel, daemon binary, or system
-clock. Stronger tamper evidence requires remote replication or signed external
-checkpoints kept outside the host.
-
-## Public repository hygiene
-
-Tracked files must contain no real credentials, tokens, keys, account names,
-hostnames, IP addresses, machine identifiers, absolute developer paths, private
-logs, or private correspondence. Examples use reserved or generic values.
-
-The repository ignores common secret formats, local environment files, logs,
-build outputs, editor state, and local agent instructions. Before publishing,
-the staged tree and release archive must be scanned for secrets and identifying
-data. Sanitized configuration templates use an `.example` suffix.
-
-## Tested Linux container environment
-
-The following environment was used for the recorded development verification
-on 2026-09-25. Host machine identifiers and host operating-system details are
-intentionally not recorded.
-
-| Component | Tested version |
-| --- | --- |
-| Docker Desktop | 4.87.0 (236836) |
-| Docker Engine, client and server | 29.7.2, API 1.55 |
-| Rust test image | `rust:1.89-bookworm` |
-| Rust image digest | `sha256:948f9b08a66e7fe01b03a98ef1c7568292e07ec2e4fe90d88c07bb14563c84ff` |
-| FUSE and package test image | `ubuntu:22.04` |
-
-Verification performed in Linux containers:
-
-- `./test.sh --locked` passed for the Autobricks Log ingestion tests.
-- `cargo clippy --locked --all-targets -- -D warnings` passed.
-- `tests/linux-test.sh` passed in a privileged container with a real FUSE
-  mount, including program-directory creation, same-day daily-file reuse,
-  syslog content preservation, ingestion acknowledgements, and verification.
-- The inherited WORM regression suite is not part of the Autobricks Log test
-  workflow and does not create generic audit files or test directories here.
-- The Debian package build and package-content inspection passed for Ubuntu
-  22.04.
-- `tests/build_version.py` passed after dependency prefetch, including
-  successful, concurrent, and failed-build version behavior.
-
-This container verification does not replace installation testing on a real
-Linux host with systemd and rsyslog. That integration remains to be verified.
-
-## Installation and operation
-
-- [INSTALL.md](INSTALL.md) describes package installation, storage paths, and
-  service startup.
-- [HOWTO.md](HOWTO.md) describes rsyslog routing, message submission, directory
-  creation, verification, and retention behavior.
-
-Release packages are built as one versioned matrix under `build/`:
+서버 관리자는 다음 명령으로 상태와 이력을 확인할 수 있습니다.
 
 ```sh
-scripts/package_deb_matrix.sh
+sudo ab-truelog status --service example-service
+sudo ab-truelog history --service example-service
+sudo ab-truelog checksum --service example-service --date YYYY-MM-DD
 ```
 
-The matrix contains Ubuntu 22.04 and 24.04 packages for amd64 and arm64. Package
-installation asks for the private WORM `SOURCE` directory and the global
-retention period, installs the single `/usr/bin/ablog` executable, and enables
-the mount and retention-manager services.
+`YYYY-MM-DD`는 확인할 실제 날짜로 바꿉니다. 일반 파일의 SHA256 값과 True Log 체인 체크섬은 다르므로, 체인 검증에는 `ab-truelog checksum`을 사용합니다.
 
-## License
+**[TRUELOG.md](TRUELOG.md)**에서 서버·클라이언트 설치, Pairing Code 재설정, Express 계정 설정과 Node.js 예시, syslog 연동, 장애 확인 방법을 한 문서로 볼 수 있습니다.
 
-The inherited filesystem code is licensed under the terms in [LICENSE](LICENSE)
-and [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md). New dependencies must be
-reviewed for compatibility before they are added.
+## 저장과 보존
+
+두 제품 모두 설치 시 하나의 SOURCE 경로와 보존 기간을 설정합니다. 프로그램은 저장 경로나 보존 기간을 개별적으로 선택할 수 없습니다. 첫 메시지가 수신될 때 해당 프로그램의 일별 파일이 만들어지며, 메시지 내용이나 생산자가 지정한 시각으로 저장 경로를 결정하지 않습니다.
+
+WORM은 마운트 인터페이스를 통한 덮어쓰기와 조기 삭제를 제한합니다. 원본 저장소·커널·실행 파일을 직접 변경할 수 있는 관리자까지 막는 기능은 아닙니다. 보존 기한이 지나 삭제된 로그는 이력 정보만으로 복원할 수 없습니다.
+
+## 기존 Log에서 True Log로 전환
+
+| 항목 | Autobricks Log | Autobricks True Log |
+| --- | --- | --- |
+| 서버 패키지 | `autobricks-log` | `autobricks-truelog` |
+| 서버 명령 | `ablog` | `ab-truelog` |
+| 저장 서비스 | `ab-worm.service`, `autobricks-log.service` | `ab-truelog.service` |
+| 원격 접속 | 기존 Log의 로컬 syslog 연동 | 별도 RPC 서비스와 TCP/mTLS 클라이언트 |
+| 새 일별 파일 | `ablog-YYYY-MM-DD.log` | `truelog-YYYY-MM-DD.log` |
+
+패키지명·서비스·명령 형식이 다르므로 기존 Log 위에 True Log를 설치하는 것을 단순한 동일 패키지 업그레이드로 취급하지 마세요. 기존 데이터와 관리 상태를 보전하고, [전환 안내](TRUELOG.md#10-기존-log-전환과-업그레이드)를 먼저 확인하세요.
+
+호환되는 관리 상태가 있는 기존 체인의 `ablog-*.log`는 이름을 바꾸거나 덮어쓰지 않습니다. 해당 일자의 활성 파일을 이어 쓰고 다음 일별 회전부터 새 파일명을 사용합니다. 관리 상태가 없는 임의의 로그 디렉터리를 자동 채택하는 기능은 아닙니다.
+
+True Log 서버에서 `remove`는 설정·관리 상태·SOURCE를 보존하지만, `purge`는 서버 설정·TLS 자료·체인 관리 상태를 제거합니다. 보관된 바이트가 남아 있어도 삭제된 체인 상태가 복구되지는 않습니다. 자세한 차이는 [제거 안내](TRUELOG.md#11-remove와-purge)를 참고하세요.
+
+## 다운로드와 설명서
+
+[Releases](https://github.com/pregene/autobricks-log/releases)에서 원하는 제품과 Ubuntu 버전·CPU 아키텍처에 맞는 패키지를 선택하세요.
+
+- **Autobricks Log:** [설치 안내](INSTALL.md) · [사용 및 rsyslog 설정](HOWTO.md)
+- **Autobricks True Log:** [설치·사용 통합 안내](TRUELOG.md)
+- **WORM 저장소:** [기능 및 저장 정책](docs/WORM_README.md)
+
+## 라이선스
+
+[LICENSE](LICENSE)와 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)를 참고하세요.
