@@ -2,9 +2,18 @@
 
 Autobricks True Log는 프로그램별 로그를 WORM 저장소에 보관하고, 로그 쓰기 전후의 파일 크기와 체크섬을 연결하여 True Log 기록을 처리합니다. 애플리케이션은 클라이언트를 통해 로그를 전송하고, 서버의 저장 내구성 경계를 완료한 뒤 반환되는 쓰기 영수증을 받을 수 있습니다.
 
-이 문서는 **0.3.55의 서버와 클라이언트**를 설명합니다. 기존 `autobricks-log` 0.2.31의 설치 명령과 서비스 이름을 그대로 사용하면 안 됩니다. 이 저장소의 기존 README, INSTALL, HOWTO는 이전 Log 배포판을 설명할 수 있으므로, **True Log 설치에는 이 문서를 기준으로 사용하세요.**
+**적용 제품: `autobricks-truelog` 및 `autobricks-truelog-cli` 0.3.55**
 
-- [True Log 0.3.55 다운로드](https://github.com/pregene/autobricks-log/releases/tag/v0.3.55)
+이 문서는 True Log 서버와 클라이언트의 설치·사용·운영을 안내합니다. Autobricks Log 사용자는 [Log 설치](INSTALL.md)와 [Log 사용·검증](HOWTO.md)을 참고하세요. 두 제품은 패키지·서비스·명령이 다르므로 자신의 제품에 맞는 문서를 사용합니다.
+
+[제품 선택과 문서 목록](README.md#내-제품의-문서-찾기) · **True Log 통합 안내**
+
+- 서버 관리자: [서버 설치](#3-서버-설치) → [체인 조회·검증](#8-서버에서-체인-상태-및-파일-검증)
+- 애플리케이션 사용자: [클라이언트 설치·페어링](#4-클라이언트-설치와-페어링) → [쓰기·영수증](#5-로그-쓰기와-쓰기-영수증) → [Express 연동](#6-express--nodejs-연동)
+- syslog 연동 사용자: [서버 설치](#3-서버-설치) → [rsyslog 설정](#7-기존-syslog-애플리케이션-연동)
+- 운영 중 문제: [문제 해결](#9-문제-해결) · [전환](#10-기존-log-전환과-업그레이드) · [제거·재설치](#11-remove와-purge)
+
+- [배포 파일 목록](https://github.com/pregene/autobricks-log/releases): True Log는 `autobricks-truelog` 또는 `autobricks-truelog-cli` 패키지를 선택합니다.
 - [기존 Autobricks Log 0.2.31](https://github.com/pregene/autobricks-log/releases/tag/v0.2.31)
 
 ## 1. 기존 Log와 무엇이 다른가
@@ -379,12 +388,8 @@ sudo journalctl -u ab-truelog.service -n 100 --no-pager
 
 이 설명은 True Log 0.3.55 서버의 제거 정책입니다. 구 `autobricks-log` 패키지를 purge하면 해당 구버전의 제거 스크립트가 실행되므로 같은 보존 동작을 가정하지 마세요. 클라이언트 패키지를 purge하면 클라이언트 설정·인증서·저장된 소켓 사용자 설정이 제거됩니다.
 
-## 12. 이번 배포의 검증 범위
+## 12. 플랫폼 이용 안내
 
-- 4개 Ubuntu/아키텍처 조합의 서버·클라이언트 패키지, 총 8개를 제공합니다. 버전은 모두 **0.3.55**입니다.
-- 패키지 버전·ELF 아키텍처·SHA256 무결성을 확인했습니다. ARM64 패키지는 교차 컴파일했습니다.
-- Ubuntu 22.04 amd64 CI의 포맷·workspace 테스트·lint·panic 검사·네이티브 빌드 및 버전 잠금·설치/서비스 회귀 검사가 통과했습니다. 설치 회귀 검사는 실제 호스트 설치와 구분됩니다.
-- Ubuntu 22.04 amd64의 설치/TCP 기준 동작이 확인되었으며 Pairing Code 표시와 하이픈 없는 페어링 동작도 확인되었습니다.
-- Ubuntu 24.04와 ARM64 실제 머신의 설치·실행, 서버/클라이언트 동시 설치, mTLS 원격 쓰기부터 저장까지의 전체 운영 검증은 완료로 간주하지 않습니다. 패키지 빌드 성공과 운영 검증은 구분됩니다.
+0.3.55 패키지는 Ubuntu 22.04·24.04의 amd64·arm64용으로 구분됩니다. 각 머신의 운영체제와 아키텍처에 맞는 파일을 선택하세요. Ubuntu 24.04와 ARM64의 실제 설치·실행, 서버·클라이언트 동시 설치 및 mTLS 원격 쓰기부터 저장까지의 전체 동작은 운영 투입 전에 배포 환경에서 확인해야 합니다.
 
 추가 상세 자료는 설치된 서버의 `/usr/share/doc/autobricks-truelog/` 아래 `INSTALL.md`, `RPC.md`, `INTEGRATION.md`, `HOWTO.md`에서 확인할 수 있습니다. 클라이언트에는 `/usr/share/doc/autobricks-truelog-cli/RPC.md`가 포함됩니다.

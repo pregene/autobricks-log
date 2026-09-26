@@ -1,4 +1,10 @@
-# Autobricks Log HOWTO
+# Autobricks Log 사용 안내
+
+**적용 제품: `autobricks-log` 0.2.31 / 명령: `ablog`**
+
+[Log 설치](INSTALL.md)를 완료한 뒤, 이 문서 순서대로 rsyslog 전달 설정 → 메시지 전송 → 저장 파일 검증을 진행하세요. True Log 사용자는 [True Log의 syslog 연동](TRUELOG.md#7-기존-syslog-애플리케이션-연동) 또는 [클라이언트 쓰기](TRUELOG.md#5-로그-쓰기와-쓰기-영수증)를 사용합니다.
+
+[제품 선택과 문서 목록](README.md#내-제품의-문서-찾기) · [Log 설치](INSTALL.md) → **Log 사용·검증**
 
 Applications use the standard system syslog API. rsyslog forwards selected
 messages to Autobricks Log, which creates a directory from the program name and
@@ -163,3 +169,13 @@ rsyslog retains those messages in its disk queue and retries them.
 A successful application `syslog()` return is not proof that WORM storage has
 completed. Durable delivery is determined by the confirmation exchanged between
 rsyslog and Autobricks Log.
+
+문제가 발생하면 Log 서비스와 rsyslog의 최근 기록을 확인합니다.
+
+```sh
+sudo journalctl -u ab-worm.service -u autobricks-log.service -u rsyslog.service -n 100 --no-pager
+sudo rsyslogd -N1
+findmnt /mnt/worm-storage
+```
+
+메시지가 저장되지 않으면 rsyslog의 프로그램 이름 필터가 전송 태그와 일치하는지, 서비스와 WORM 마운트가 실행 중인지, 디스크 여유 공간이 있는지 확인하세요. 설정 수정 후에는 `rsyslogd -N1` 검증을 통과한 다음 rsyslog를 재시작합니다.

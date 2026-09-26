@@ -7,6 +7,31 @@ Autobricks는 [WORM 저장소](https://github.com/pregene/autobricks-worm)를 �
 | 기존 syslog 로그를 프로그램별 일별 파일로 보관하고 무결성 확인 | Autobricks Log | [설치](INSTALL.md) · [사용법](HOWTO.md) |
 | 애플리케이션 기록을 체크섬 체인으로 관리하고 원격 쓰기 영수증 수신 | Autobricks True Log | [설치 및 사용 통합 안내](TRUELOG.md) |
 
+## 내 제품의 문서 찾기
+
+설치된 패키지나 사용하는 명령에 맞춰 안내를 선택하세요. Autobricks Log 사용자는 Log 설치·사용 문서를, Autobricks True Log 사용자는 True Log 통합 문서를 따르면 됩니다.
+
+| 설치된 패키지 / 명령 | 적용 문서 | 읽는 순서 |
+| --- | --- | --- |
+| `autobricks-log` / `ablog` | Autobricks Log 0.2.31 | [설치](INSTALL.md) → [rsyslog 설정](HOWTO.md#configure-rsyslog-delivery) → [로그 전송](HOWTO.md#send-a-command-line-message) → [파일 검증](HOWTO.md#verify-the-file) |
+| `autobricks-truelog` / `ab-truelog` | True Log 0.3.55 서버 | [서버 설치](TRUELOG.md#3-서버-설치) → [상태·체인 검증](TRUELOG.md#8-서버에서-체인-상태-및-파일-검증) |
+| `autobricks-truelog-cli` / `ab-truelog-cli` | True Log 0.3.55 클라이언트 | [설치·페어링](TRUELOG.md#4-클라이언트-설치와-페어링) → [쓰기·영수증](TRUELOG.md#5-로그-쓰기와-쓰기-영수증) → [Express 연동](TRUELOG.md#6-express--nodejs-연동) |
+
+설치된 패키지를 확인하려면 다음 조회 명령을 사용합니다. 설치되지 않은 패키지 이름에는 조회 오류가 나올 수 있습니다.
+
+```sh
+dpkg-query -W -f='${Package} ${Version}\n' \
+  autobricks-log autobricks-truelog autobricks-truelog-cli
+```
+
+| 하려는 작업 | Autobricks Log 사용자 | Autobricks True Log 사용자 |
+| --- | --- | --- |
+| 새 설치 | [INSTALL.md](INSTALL.md) | [서버 설치](TRUELOG.md#3-서버-설치) · [클라이언트 설치](TRUELOG.md#4-클라이언트-설치와-페어링) |
+| syslog 프로그램 연결 | [HOWTO.md](HOWTO.md#configure-rsyslog-delivery) | [True Log용 rsyslog 설정](TRUELOG.md#7-기존-syslog-애플리케이션-연동) |
+| 로그 기록·검증 | [전송](HOWTO.md#send-a-command-line-message) · [검증](HOWTO.md#verify-the-file) | [쓰기 영수증](TRUELOG.md#5-로그-쓰기와-쓰기-영수증) · [체인 검증](TRUELOG.md#8-서버에서-체인-상태-및-파일-검증) |
+| 문제 해결 | [전달 실패 확인](HOWTO.md#delivery-failures) | [문제 해결](TRUELOG.md#9-문제-해결) |
+| 제거·재설치 | [Log 제거 안내](INSTALL.md#upgrade-and-removal) | [True Log remove와 purge](TRUELOG.md#11-remove와-purge) |
+
 ## Autobricks Log
 
 Autobricks Log는 애플리케이션이 운영체제의 표준 syslog API로 보낸 메시지를 rsyslog를 통해 수집합니다. rsyslog에서 지정한 프로그램의 메시지만 저장하며, 프로그램마다 일별 로그 파일을 관리합니다.
