@@ -1,17 +1,17 @@
-# Autobricks Log 설치 안내
+# Install Autobricks Log
 
-**적용 제품: `autobricks-log` 0.2.31 / 명령: `ablog`**
+**Applies to Autobricks Log 0.2.31: package `autobricks-log`, command `ablog`.**
 
-이 문서는 Autobricks Log를 설치하고 계속 운영하는 사용자를 위한 안내입니다. True Log 서버·클라이언트를 설치하려면 [TRUELOG.md](TRUELOG.md)를 사용하세요. 제품별 패키지·서비스·명령이 다르므로 해당 제품의 절차를 따릅니다.
+[Product overview](README.md) · **Log installation** → [Log usage](HOWTO.md)
 
-[제품 선택과 문서 목록](README.md#내-제품의-문서-찾기) · **Log 설치** → [Log 사용·검증](HOWTO.md)
+For `autobricks-truelog` or `autobricks-truelog-cli`, use the separate [True Log guide](TRUELOG.md).
 
 ## Install the package
 
 Autobricks Log runs on Linux with systemd, rsyslog, FUSE 3, and the Autobricks
 WORM filesystem.
 
-[Log 0.2.31 릴리스](https://github.com/pregene/autobricks-log/releases/tag/v0.2.31)에서 머신의 Ubuntu 버전(22.04 또는 24.04)과 아키텍처(amd64 또는 arm64)에 맞는 `autobricks-log-0.2.31-ubuntu-버전-아키텍처.deb`를 다운로드하세요. 다음은 Ubuntu 22.04 amd64 예시이며, 다운로드한 디렉터리에서 실행합니다. 다른 환경에서는 패키지 파일명을 바꾸세요.
+Download the matching package from the [Log 0.2.31 release](https://github.com/pregene/autobricks-log/releases/tag/v0.2.31). Packages are available for Ubuntu 22.04 and 24.04, on amd64 and arm64. Run the commands below from the download directory. This example uses Ubuntu 22.04 amd64; substitute the complete filename for your platform.
 
 ```sh
 sudo apt-get update
@@ -117,7 +117,7 @@ program directory and WORM file.
 
 ## Upgrade and removal
 
-이 절은 **Autobricks Log 패키지**에 적용됩니다. True Log의 제거·관리 상태 정책은 [별도 안내](TRUELOG.md#11-remove와-purge)를 확인하세요. 제품을 바꾸려는 경우에는 [Log에서 True Log로 전환](TRUELOG.md#10-기존-log-전환과-업그레이드)을 먼저 읽으세요.
+This section describes the **Autobricks Log package**. True Log has a [separate removal policy](TRUELOG.md#remove-purge-and-reinstall). Read the [transition guidance](TRUELOG.md#transition-from-autobricks-log) before changing products.
 
 
 An upgrade preserves the installation settings, WORM data and metadata,

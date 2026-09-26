@@ -1,51 +1,30 @@
-# Autobricks True Log 0.3.55 설치 및 사용 안내
+# Autobricks True Log 0.3.55 — Installation and Usage
 
-Autobricks True Log는 프로그램별 로그를 WORM 저장소에 보관하고, 로그 쓰기 전후의 파일 크기와 체크섬을 연결하여 True Log 기록을 처리합니다. 애플리케이션은 클라이언트를 통해 로그를 전송하고, 서버의 저장 내구성 경계를 완료한 뒤 반환되는 쓰기 영수증을 받을 수 있습니다.
+**Applies to `autobricks-truelog` and `autobricks-truelog-cli` 0.3.55.**
 
-**적용 제품: `autobricks-truelog` 및 `autobricks-truelog-cli` 0.3.55**
+[Product overview](README.md) · [Download True Log 0.3.55](https://github.com/pregene/autobricks-log/releases/tag/v0.3.55)
 
-이 문서는 True Log 서버와 클라이언트의 설치·사용·운영을 안내합니다. Autobricks Log 사용자는 [Log 설치](INSTALL.md)와 [Log 사용·검증](HOWTO.md)을 참고하세요. 두 제품은 패키지·서비스·명령이 다르므로 자신의 제품에 맞는 문서를 사용합니다.
+Autobricks Log users should follow [Log installation](INSTALL.md) and [Log usage](HOWTO.md). This guide covers True Log's own server, client, commands, and services.
 
-[제품 선택과 문서 목록](README.md#내-제품의-문서-찾기) · **True Log 통합 안내**
+## Choose your True Log setup
 
-- 서버 관리자: [서버 설치](#3-서버-설치) → [체인 조회·검증](#8-서버에서-체인-상태-및-파일-검증)
-- 애플리케이션 사용자: [클라이언트 설치·페어링](#4-클라이언트-설치와-페어링) → [쓰기·영수증](#5-로그-쓰기와-쓰기-영수증) → [Express 연동](#6-express--nodejs-연동)
-- syslog 연동 사용자: [서버 설치](#3-서버-설치) → [rsyslog 설정](#7-기존-syslog-애플리케이션-연동)
-- 운영 중 문제: [문제 해결](#9-문제-해결) · [전환](#10-기존-log-전환과-업그레이드) · [제거·재설치](#11-remove와-purge)
-
-- [배포 파일 목록](https://github.com/pregene/autobricks-log/releases): True Log는 `autobricks-truelog` 또는 `autobricks-truelog-cli` 패키지를 선택합니다.
-- [기존 Autobricks Log 0.2.31](https://github.com/pregene/autobricks-log/releases/tag/v0.2.31)
-
-## 1. 기존 Log와 무엇이 다른가
-
-| 항목 | 기존 Autobricks Log 0.2.31 | Autobricks True Log 0.3.55 |
+| Use case | Required components | Follow these sections |
 | --- | --- | --- |
-| 서버 패키지 | `autobricks-log` | `autobricks-truelog` |
-| 주요 명령 | `ablog` | `ab-truelog` |
-| 저장 서비스 | `ab-worm.service`, `autobricks-log.service` | WORM과 로깅을 함께 관리하는 `ab-truelog.service` |
-| 원격 전송 | 기존 릴리스의 로컬 rsyslog 연동 안내 | 별도 `ab-truelog-rpc.service`와 TCP/mTLS 클라이언트 |
-| 애플리케이션 클라이언트 | 기존 릴리스에 별도 True Log 클라이언트 없음 | `autobricks-truelog-cli` 패키지, `ab-truelog-cli` 명령 |
-| 새 일별 파일 | `ablog-YYYY-MM-DD.log` | `truelog-YYYY-MM-DD.log` |
-| True Log 처리 | 기존 릴리스 사용법과 구분 필요 | 연속 체크섬 체인, 쓰기 전후 영수증, 현재 상태·봉인 이력·파일 검증 |
+| Collect local syslog messages on a server | True Log server; RPC can be `none` | [Server installation](#install-the-true-log-server) → [Local syslog integration](#local-syslog-integration) |
+| Submit records from a remote application | True Log server with TCP/mTLS; client on the application machine | [Server installation](#install-the-true-log-server) → [Client installation](#install-the-true-log-client) → [Client writes](#write-records-through-the-client) |
+| Submit records from Express | Same server/client setup; authorize the Node.js runtime account | [Client installation](#install-the-true-log-client) → [Express integration](#express-and-nodejs-integration) |
+| Inspect stored chains | Administrator access to the True Log server | [Server-side inspection](#server-side-chain-inspection) |
 
-WORM은 저장 정책을 담당하고, True Log는 프로그램별 기록·회전·체크섬 체인·영수증을 관리합니다. RPC는 별도의 네트워크 입구입니다.
+The server stores records and maintains checksum chains. The client forwards requests over a persistent TCP or mTLS connection and returns the server's write receipt.
 
 ```text
-Express / 애플리케이션
-  -> ab-truelog-cli write
-  -> 로컬 Unix 소켓
-  -> ab-truelog-cli.service
-  -> 지속 TCP 또는 mTLS 연결
-  -> ab-truelog-rpc.service
-  -> ab-truelog.service
-  -> WORM 저장소
+Application → ab-truelog-cli → local client daemon → TCP/mTLS
+            → ab-truelog-rpc.service → ab-truelog.service → WORM storage
 ```
 
-서버만 로컬에서 사용할 때는 RPC를 `none`으로 설정할 수 있습니다. 원격 클라이언트를 사용할 때는 서버와 클라이언트의 TCP/mTLS 모드가 일치해야 합니다.
+## Select and verify packages
 
-## 2. 다운로드 파일 선택 및 확인
-
-각 머신의 Ubuntu 버전과 CPU 아키텍처에 맞는 파일을 선택합니다.
+Select packages for each machine's Ubuntu release and architecture. The server and client may run on different machines and architectures.
 
 ```sh
 . /etc/os-release
@@ -53,29 +32,29 @@ printf '%s\n' "$VERSION_ID"
 dpkg --print-architecture
 ```
 
-| Ubuntu | 아키텍처 | 서버 패키지 | 클라이언트 패키지 |
+| Ubuntu | Architecture | Server | Client |
 | --- | --- | --- | --- |
 | 22.04 | amd64 | `autobricks-truelog-0.3.55-ubuntu-22.04-amd64.deb` | `autobricks-truelog-cli-0.3.55-ubuntu-22.04-amd64.deb` |
 | 22.04 | arm64 | `autobricks-truelog-0.3.55-ubuntu-22.04-arm64.deb` | `autobricks-truelog-cli-0.3.55-ubuntu-22.04-arm64.deb` |
 | 24.04 | amd64 | `autobricks-truelog-0.3.55-ubuntu-24.04-amd64.deb` | `autobricks-truelog-cli-0.3.55-ubuntu-24.04-amd64.deb` |
 | 24.04 | arm64 | `autobricks-truelog-0.3.55-ubuntu-24.04-arm64.deb` | `autobricks-truelog-cli-0.3.55-ubuntu-24.04-arm64.deb` |
 
-`amd64`는 x86-64, `arm64`는 AArch64입니다. 서버와 클라이언트는 서로 다른 머신에 설치할 수 있으며, 각 머신에 맞는 패키지를 선택합니다. GitHub의 자동 `Source code` 압축 파일은 이 배포 저장소의 내용이며, 설치용 `.deb`를 대신하지 않습니다.
+`amd64` means x86-64; `arm64` means AArch64. Download the required packages and `SHA256SUMS` from the release. The automatically generated source archives contain this distribution repository's documents and do not replace the installable packages.
 
-패키지와 `SHA256SUMS`를 같은 디렉터리에 다운로드한 뒤 확인합니다. 아래 예시는 22.04 amd64이며, 다른 환경에서는 파일명 전체를 변경하세요.
+For the 22.04 amd64 example, verify the files you downloaded:
 
 ```sh
 grep -F '  autobricks-truelog-0.3.55-ubuntu-22.04-amd64.deb' SHA256SUMS | sha256sum -c -
 grep -F '  autobricks-truelog-cli-0.3.55-ubuntu-22.04-amd64.deb' SHA256SUMS | sha256sum -c -
 ```
 
-다운로드한 파일마다 `OK`가 출력되어야 합니다. 8개 패키지를 모두 다운로드했다면 `sha256sum -c SHA256SUMS`로 한 번에 확인할 수 있습니다.
+Each downloaded file must report `OK`. If you download all eight packages, run `sha256sum -c SHA256SUMS`.
 
-## 3. 서버 설치
+## Install the True Log server
 
-아래는 **새 서버 설치** 예시입니다. 기존 Log가 설치되어 있거나 보관 중인 데이터가 있으면 먼저 10절의 전환 주의사항을 읽으세요.
+Run this section **on the storage server**. It installs `autobricks-truelog`, not the client. For an existing Autobricks Log installation, read [transition guidance](#transition-from-autobricks-log) first.
 
-다운로드 디렉터리에서 의존성을 설치한 뒤 서버 패키지를 설치합니다.
+From the download directory, install dependencies and the server package. Replace the filename for other platforms.
 
 ```sh
 sudo apt-get update
@@ -83,25 +62,25 @@ sudo apt-get install -y rsyslog fuse3 debconf systemd openssl python3
 sudo dpkg -i ./autobricks-truelog-0.3.55-ubuntu-22.04-amd64.deb
 ```
 
-`dpkg`는 의존성을 자동 다운로드하지 않습니다. 의존성 오류가 나오면 해당 의존성을 APT로 설치하고 같은 `dpkg -i` 명령을 다시 실행하세요.
+`dpkg` does not download missing dependencies. If it reports an unmet dependency, install it with APT and rerun the package installation.
 
-### 설치 화면의 입력 항목
+### Server installation questions
 
-| 항목 | 설명 |
+| Question | Value |
 | --- | --- |
-| SOURCE path | WORM 원본 데이터가 저장될 절대 경로. 예: `/var/lib/autobricks-log-source`. 마운트 경로와 달라야 합니다. |
-| Retention days | 전체 저장소에 적용하는 보존 일수. 프로그램별로 별도 지정하지 않습니다. |
-| RPC support | `none`, `tcp`, `mtls` 중 선택합니다. |
-| Bind address | 서버가 수신할 로컬 주소. 클라이언트가 접속할 주소와 구분합니다. |
-| Server address | 클라이언트가 실제로 접속할 서버 IP 또는 DNS 이름. mTLS 인증서의 서버 주소에도 사용합니다. |
-| Port | RPC 포트. 기본값은 `5544`입니다. |
-| 인증서 정보 | mTLS 선택 시 국가·지역·조직 등 설치 화면에서 요구하는 정보를 입력합니다. |
+| SOURCE path | Absolute path for private WORM backing data, for example `/var/lib/autobricks-log-source`. It must differ from the mount path. |
+| Retention days | One retention period for the complete storage mount. Programs cannot override it. |
+| RPC support | `none` for local-only use, or `tcp` / `mtls` for client connections. |
+| Bind address | Local address on which the RPC server listens. |
+| Server address | IP address or DNS name clients will actually use. Also used for the mTLS server certificate. |
+| Port | RPC TCP port; default `5544`. |
+| Certificate fields | In mTLS mode, supply the country, region, organization, and other requested certificate information. |
 
-문서의 `192.0.2.10`, `app01.example.test`, `1234-5678` 등은 예시입니다. 실제 배포 설정으로 바꿔야 합니다. `0.0.0.0`은 수신 주소로 사용할 수 있지만 클라이언트의 목적지 주소로 사용하지 않습니다. 네트워크와 방화벽에서 선택한 TCP 포트가 클라이언트에 허용되어 있어야 합니다.
+Values such as `192.0.2.10` and `app01.example.test` are examples. Replace them with your deployment values. A wildcard bind address such as `0.0.0.0` is not a client destination. Allow the selected port between client and server through your network controls.
 
-mTLS 설치 완료 화면의 **Pairing Code를 확인하여 클라이언트 설치에 사용**합니다. 코드는 등록 자격 정보이므로 공개 문서나 애플리케이션 로그에 남기지 마세요. 이 버전에서는 코드의 자동 만료·사용 횟수 제한이 없고, 여러 클라이언트가 같은 공유 클라이언트 인증서 자료를 받습니다. 코드와 인증서를 클라이언트별 독립 신원 관리 기능으로 간주하지 마세요.
+For mTLS, record the **Pairing Code shown on the installation-complete screen** and use it during client installation. Treat it as an enrollment credential. In this version it has no automatic expiry or use-count limit; enrolled clients receive shared client certificate material rather than distinct per-client certificates.
 
-### 서버 상태 확인
+### Check the server
 
 ```sh
 sudo ab-truelog check
@@ -109,18 +88,20 @@ systemctl status ab-truelog.service --no-pager
 findmnt /mnt/worm-storage
 ```
 
-TCP 또는 mTLS를 선택했다면 RPC도 확인합니다.
+If TCP or mTLS is enabled:
 
 ```sh
 systemctl status ab-truelog-rpc.service --no-pager
 sudo ss -ltnp
 ```
 
-`ab-truelog.service`가 WORM과 로깅을 함께 관리합니다. 별도의 WORM 서비스를 추가로 실행하지 않습니다. RPC는 `ab-truelog-rpc.service`로 분리되어 있습니다.
+`ab-truelog.service` manages WORM and logging together. Do not start an additional standalone WORM service. RPC runs separately as `ab-truelog-rpc.service`.
 
-## 4. 클라이언트 설치와 페어링
+## Install the True Log client
 
-클라이언트는 Express 등 애플리케이션이 실행되는 머신에 설치합니다. 설치 사용자를 자동 등록하려면 해당 사용자로 로그인한 상태에서 `sudo`를 사용합니다.
+Run this section **on the application machine**. It installs `autobricks-truelog-cli`. The server must already be reachable in the selected TCP/mTLS mode.
+
+Run installation through sudo as the user who will send initial test messages:
 
 ```sh
 sudo apt-get update
@@ -128,52 +109,60 @@ sudo apt-get install -y debconf systemd acl
 sudo dpkg -i ./autobricks-truelog-cli-0.3.55-ubuntu-22.04-amd64.deb
 ```
 
-| 입력 순서 | 입력값 |
+### Client installation questions
+
+| Question | Value |
 | --- | --- |
-| Connection mode | 서버와 동일한 `tcp` 또는 `mtls` |
-| Client hostname | 로그에 기록할 클라이언트 이름. 기본값은 현재 머신의 hostname이며 서버 주소가 아닙니다. |
-| Server address | 서버의 접속 가능한 IP 또는 DNS 이름 |
-| RPC port | 서버에서 설정한 포트. 기본값 `5544` |
-| Pairing Code | mTLS일 때만 서버에서 확인한 8자리 코드 입력 |
+| Connection mode | `tcp` or `mtls`, matching the server. |
+| Client hostname | Hostname recorded in forwarded logs. Defaults to the application machine's hostname; this is not the server address. |
+| Server address | Reachable server IP address or DNS name. |
+| RPC port | The server's configured port; default `5544`. |
+| Pairing Code | mTLS only: the eight-digit code displayed by the server. |
 
-**Pairing Code는 입력할 때 화면에 보입니다.** `12345678`과 `1234-5678` 형식을 모두 허용하고 공백은 무시합니다. 예시 코드가 아닌 서버에서 확인한 코드를 입력하세요. 첫 mTLS 등록에서는 필수이며, 이미 인증서가 있는 클라이언트에서 같은 서버의 인증서를 재사용할 때만 빈칸으로 둘 수 있습니다. TCP에서는 코드 입력과 인증서 등록을 건너뜁니다. TCP는 TLS 암호화와 인증서 인증을 제공하지 않습니다.
+**Pairing Code input is visible.** Both `12345678` and `1234-5678` formats are accepted, and whitespace is ignored. These are format examples; enter the actual code from your server.
 
-설정은 `/etc/autobricks-truelog-cli/client.toml`, 인증서는 `/etc/autobricks-truelog-cli/clients/`에 저장됩니다. 서버 설정 디렉터리와 분리되어 있습니다. mTLS 등록에 성공하면 설치 과정에서 클라이언트 서비스를 활성화하고 시작합니다.
+First-time mTLS enrollment requires a code. Leave it blank only to reuse existing client certificates for the same server during an upgrade or reconfiguration. TCP mode skips enrollment and certificates; it provides no TLS encryption or certificate authentication.
+
+Client settings are stored in `/etc/autobricks-truelog-cli/client.toml`, with certificates under `/etc/autobricks-truelog-cli/clients/`. After configuration and any required enrollment succeed, installation enables and starts the client service.
 
 ```sh
 systemctl status ab-truelog-cli.service --no-pager
 ```
 
-### Pairing Code 입력 실패로 설치가 중단된 경우
+### Retry a failed Pairing Code or enrollment
 
-코드 누락·형식 오류·서버 거부 또는 등록 실패로 설치가 중단되면 다음 명령으로 미완료 설정을 다시 진행합니다.
+If installation stops because the code is missing, malformed, rejected, or enrollment fails:
 
 ```sh
 sudo dpkg --configure autobricks-truelog-cli
 ```
 
-Pairing Code 질문이 다시 나오면 올바른 코드를 입력합니다. 다른 저장된 답변은 유지됩니다. **코드 수정 때문에 purge하거나 재설치할 필요가 없습니다.** 코드가 맞아도 실패하면 서버 모드·주소·포트·서버 실행 상태를 확인하세요.
+The installer asks for the Pairing Code again. Replace the previous entry with the correct eight digits and complete configuration. Other saved answers are retained. **Purge and reinstallation are not required to correct the code.**
 
-### 설치 완료 후 설정을 변경하는 경우
+If the correct code still fails, check server availability, connection mode, address, and port.
+
+### Change a configured client's settings
+
+For an already configured package:
 
 ```sh
 sudo dpkg-reconfigure autobricks-truelog-cli
 ```
 
-모드, hostname, 서버 주소, 포트 및 Pairing Code를 다시 설정합니다. 새로운 코드로 다시 등록하거나, 같은 서버의 기존 인증서를 재사용한다면 코드를 비워둘 수 있습니다. 설정 완료 시 클라이언트 서비스가 재시작됩니다. 원래 설치가 미완료이면 앞의 `dpkg --configure`를 먼저 사용합니다.
+This reopens the mode, hostname, server address, port, and mTLS code questions. Enter a code to enroll again, or leave it blank to reuse certificates for the same server. Completing configuration restarts the client. Use `dpkg --configure` for an installation that is still incomplete.
 
-## 5. 로그 쓰기와 쓰기 영수증
+## Write records through the client
 
-클라이언트 설치 시 sudo를 실행한 사용자에게는 소켓 ACL이 부여되어 재로그인 없이 다음 명령을 사용할 수 있습니다.
+Run this section **on the application machine**, after client installation. The sudo-invoking installation user receives immediate socket access through an ACL without a new login.
 
 ```sh
 ab-truelog-cli write --service example-service \
   --data '{"event_id":"example-event-001","action":"policy-update"}'
 ```
 
-이 명령에는 **sudo와 `--hostname`이 필요하지 않습니다.** hostname은 설치 설정에서 클라이언트 데몬이 삽입합니다. `--service`는 프로그램/서비스 이름이며, 파일 경로나 사용자 권한을 지정하는 옵션이 아닙니다. 애플리케이션에서 고정된 허용 서비스 이름을 사용하세요.
+Do not add sudo or `--hostname` to application writes. The client daemon inserts its configured hostname. `--service` identifies the program's log chain; it is not a path or an authorization setting. Keep the service name fixed by deployment configuration.
 
-응답에는 다음 정보가 포함됩니다.
+The response contains:
 
 ```text
 hostname, service
@@ -181,42 +170,44 @@ before.file, before.filesize, before.checksum
 after.file, after.filesize, after.checksum
 ```
 
-`before`와 `after`는 해당 쓰기 전후의 일관된 체크포인트입니다. 애플리케이션은 이벤트 ID와 전체 영수증을 함께 저장하여 업무 기록과 로그 기록을 연결할 수 있습니다. RPC는 서버 영수증을 전달하며, 클라이언트가 별도로 체크섬을 계산하지 않습니다.
+The before and after fields are consistent checkpoints for that write. Store the complete receipt with the application event ID. The server returns success after its configured storage durability boundary; merely connecting to the local socket is not proof of storage.
 
-로컬 소켓 접속 성공만으로 저장 성공을 판단하지 마세요. 명령의 성공 응답은 서버의 저장 내구성 경계가 완료된 뒤 반환됩니다. 연결 끊김·타임아웃·오류 종료에서는 서버에 저장되었으나 응답만 유실됐을 수도 있습니다. 클라이언트에는 내구성 재시도 큐나 자동 중복 제거가 없으며 불확실한 쓰기를 자동 재전송하지 않습니다. 동일 이벤트 ID로 결과를 대조한 뒤 재시도를 결정하세요. 업무 DB 트랜잭션과 로그 쓰기는 하나의 원자적 트랜잭션이 아닙니다.
+A timeout, disconnect, or error exit may leave the result uncertain: the server could have committed the record before the response was lost. The client has no durable retry queue or automatic deduplication and does not replay uncertain writes. Preserve the event ID and reconcile before retrying. A business database transaction and a True Log write are not one atomic transaction.
 
-### 저장 위치
+New daily files are created on the server:
 
 ```text
 /mnt/worm-storage/example-service/truelog-YYYY-MM-DD.log
 ```
 
-첫 메시지를 수신할 때 파일이 만들어집니다. 경로와 일별 파일명은 서버의 신뢰할 수 있는 수신 시각을 기준으로 결정하며, 메시지에 포함된 시각이나 내용으로 파일 경로를 선택하지 않습니다. 애플리케이션은 SOURCE나 마운트 파일에 직접 쓰지 않습니다.
+The first received message creates the file. Trusted server receive time determines the daily filename. Applications do not write directly to SOURCE or the WORM mount.
 
-## 6. Express / Node.js 연동
+## Express and Node.js integration
 
-### 실제 Express 실행 계정에 권한 부여
+Install the True Log client on the machine running Node.js. Express invokes `/usr/bin/ab-truelog-cli` with its own operating-system credentials.
 
-Express는 `/usr/bin/ab-truelog-cli`를 자식 프로세스로 실행하므로, **Node.js 프로세스의 OS 계정**에 소켓 접근 권한이 있어야 합니다. HTTP 로그인 사용자나 `--service` 값은 OS 권한을 부여하지 않습니다.
+### Authorize the Express runtime account
 
-Express가 클라이언트 설치 시 sudo를 실행한 사용자로 실행된다면 설치 ACL을 사용할 수 있습니다. 다른 전용 계정으로 실행된다면 관리자가 배포 시 그 계정에 권한을 부여합니다. 기존 계정에는 `useradd` 대신 다음을 사용합니다.
+If Express runs as the user who installed the client through sudo, that user's socket ACL provides access. A different service account must be authorized during deployment.
+
+For an **existing** account, replace `example-service` with the actual Node.js runtime account:
 
 ```sh
 sudo usermod -aG autobricks-truelog-cli example-service
 ```
 
-`example-service`를 실제 Node.js 실행 계정으로 바꾸세요. `-aG`는 기존 그룹을 유지합니다. 변경된 그룹이 적용되도록 프로세스 관리자를 갱신하여 Express를 다시 시작해야 합니다. 기존 권한을 가진 부모 프로세스가 워커만 재시작하면 예전 그룹이 유지될 수 있습니다.
+`-aG` preserves existing group memberships. Restart the process manager with updated credentials and then restart Express. Restarting only a worker under an unchanged parent may retain the old group list.
 
-새 전용 계정이 필요한 경우에만, 클라이언트 패키지를 설치한 뒤 계정을 생성합니다.
+Only if you need a **new** dedicated account, create it after installing the client package:
 
 ```sh
 sudo useradd --system --user-group --no-create-home \
   --shell /usr/sbin/nologin --groups autobricks-truelog-cli example-service
 ```
 
-계정 생성만으로 기존 Express의 실행 사용자가 바뀌지는 않습니다. 프로세스 관리자에서 해당 계정으로 실행하도록 설정하고 애플리케이션 파일 접근 권한을 부여하세요.
+Configure the process manager to run Node.js as that account and grant access to the application files. Creating an account does not change the user of an existing process.
 
-systemd를 사용한다면 계정의 그룹 목록을 변경하는 대신 애플리케이션 유닛의 기존 `User=`를 유지하면서 다음을 추가할 수도 있습니다.
+For systemd, you may instead keep the application's existing `User=` setting and add this to its unit or drop-in:
 
 ```ini
 [Service]
@@ -228,22 +219,20 @@ sudo systemctl daemon-reload
 sudo systemctl restart example-service.service
 ```
 
-root로 직접 설치하거나 무인 설치하여 sudo 호출 사용자가 없는 경우에는 애플리케이션 계정을 자동 추정하지 않으므로 위 권한 설정이 필요합니다. 컨테이너에서 실행하는 애플리케이션은 소켓 디렉터리 공유와 컨테이너 내부 UID/GID 접근 권한도 맞춰야 합니다. 소켓을 world-writable로 바꾸거나, Express를 root로 실행하거나, 요청마다 sudo를 실행하지 마세요.
+Root-only or unattended client installations cannot infer an application account. Configure its access explicitly. Applications in containers also need the socket directory and appropriate UID/GID access inside the container. Do not make the socket world-writable, run Express as root, or invoke sudo for each request.
 
-### Node.js 호출 예시
+### Invoke the client from Node.js
 
-아래는 ES module 예시입니다. `execFile()`의 인자 배열을 사용하며 HTTP 입력으로 셸 명령을 조합하지 않습니다.
+This example uses ES modules and an argument array, not a shell command assembled from HTTP input. Generate and retain the event ID before calling the function so it remains available if the write result is uncertain.
 
 ```js
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { randomUUID } from 'node:crypto';
 
 const execFileAsync = promisify(execFile);
 const service = 'example-service';
 
-export async function writeTrueLog(fields) {
-  const eventId = randomUUID();
+export async function writeTrueLog(eventId, fields) {
   const data = JSON.stringify({ ...fields, event_id: eventId });
   const { stdout } = await execFileAsync(
     '/usr/bin/ab-truelog-cli',
@@ -256,13 +245,13 @@ export async function writeTrueLog(fields) {
 }
 ```
 
-Express 핸들러에서 `await writeTrueLog(...)`를 호출하고 오류를 처리하세요. 영수증을 확인하기 전에 기록 성공으로 응답하지 않습니다. 불확실한 결과의 복구가 필요하면 호출 전에 이벤트 ID를 생성·보존하도록 애플리케이션에 맞게 구성하세요. 입력 크기와 필드를 검증하고 비밀번호·토큰 등 비밀은 기록하지 마세요. 명령 인자는 로컬 프로세스 조회에서 보일 수 있습니다.
+Call `await writeTrueLog(eventId, fields)` from your handler, handle errors, and store the returned receipt. Validate input size and fields. Do not log passwords or tokens; command-line arguments may be visible to local process inspection.
 
-## 7. 기존 syslog 애플리케이션 연동
+## Local syslog integration
 
-일반 syslog API도 계속 사용할 수 있습니다. 서버의 rsyslog가 선택한 프로그램의 메시지를 `ab-truelog ingest --service example-service`로 전달하도록 설정합니다. `openlog()` 자체는 메시지를 전송하지 않습니다. syslog 호출 성공은 True Log 쓰기 영수증 반환과 동일하지 않습니다.
+This section runs **on the True Log server** and uses `ab-truelog ingest`. It does not require the remote client package. Applications keep using the standard syslog API, while rsyslog forwards selected programs.
 
-서버에서 `/etc/rsyslog.d/60-autobricks-log.conf`에 다음 설정을 작성합니다. `example-service`는 실제 허용할 프로그램 이름으로 바꾸세요. 이미 `omprog` 모듈을 로드했다면 중복으로 로드하지 않습니다. 이전 0.2.31 릴리스의 `/usr/bin/ablog ingest example-service` 명령을 그대로 사용하지 마세요.
+Create `/etc/rsyslog.d/60-autobricks-log.conf` with the following configuration. Replace `example-service` with the selected program name. Do not load `omprog` twice if another configuration already loads it.
 
 ```text
 module(load="omprog")
@@ -311,9 +300,7 @@ if $programname == "example-service" then {
 }
 ```
 
-선택된 프로그램만 True Log에 전달됩니다. 다른 프로그램의 로그는 기존 rsyslog 규칙을 따릅니다.
-
-설정 후 검증하고 테스트 메시지를 전송합니다.
+Validate and activate the configuration:
 
 ```sh
 sudo rsyslogd -N1
@@ -321,11 +308,11 @@ sudo systemctl restart rsyslog.service
 logger --tag example-service --priority local0.notice 'first syslog test'
 ```
 
-프로그램별 필터가 구성되어 있어야 해당 메시지가 저장됩니다. per-message confirmation과 디스크 큐를 사용하는 설정을 유지하세요. 메시지별 영수증을 업무 DB에 저장해야 한다면 5~6절의 클라이언트 호출을 사용합니다.
+The filter must match the submitted tag. Keep the disk queue and per-message confirmation settings. `openlog()` does not send a message, and successful `syslog()` submission is not a returned True Log write receipt. Use the client write interface when the application needs per-record receipts.
 
-## 8. 서버에서 체인 상태 및 파일 검증
+## Server-side chain inspection
 
-아래는 서버 관리자가 서버 머신에서 실행하는 명령입니다. 클라이언트 CLI에는 `status`, `history`, `checksum` 조회 기능이 없습니다.
+Run these commands **on the True Log server as an administrator**. The client CLI does not provide status, history, or checksum commands.
 
 ```sh
 sudo ab-truelog status --service example-service
@@ -333,63 +320,80 @@ sudo ab-truelog history --service example-service
 sudo ab-truelog checksum --service example-service --date YYYY-MM-DD
 ```
 
-마지막 명령의 `YYYY-MM-DD`는 확인할 실제 로그 날짜로 바꾸세요.
+Replace `YYYY-MM-DD` with the actual log date.
 
-- `status`: 현재 체인의 파일명·크기·체크섬을 조회합니다.
-- `history`: 회전으로 봉인된 일별 파일의 기록을 조회합니다. 활성 파일은 `status`로 확인합니다.
-- `checksum`: 보관 중인 파일의 크기와 기록된 쓰기 경계에 따른 체인 체크섬을 검증합니다.
+- `status` returns the current chain head: file, size, and checksum.
+- `history` returns sealed daily-file records; use `status` for the active file.
+- `checksum` verifies the retained file using recorded write boundaries and chain state.
 
-일반 파일의 `sha256sum` 결과는 True Log 체인 체크섬과 같은 값이 아닙니다. 2절의 SHA256 검증은 배포 파일 무결성 확인용입니다. 보존 기한이 지나 삭제된 로그의 이력이 남아 있어도 삭제된 바이트를 다시 검증하거나 복원할 수는 없습니다.
+A plain file SHA256 digest is not the True Log chain checksum. Package checksums verify downloaded packages only. History remaining after retention cleanup cannot reconstruct or revalidate deleted log bytes.
 
-## 9. 문제 해결
+## Troubleshooting
+
+On the client:
 
 ```sh
 sudo journalctl -u ab-truelog-cli.service -n 100 --no-pager
+```
+
+On the server:
+
+```sh
 sudo journalctl -u ab-truelog-rpc.service -n 100 --no-pager
 sudo journalctl -u ab-truelog.service -n 100 --no-pager
 ```
 
-클라이언트 로그는 클라이언트 머신에서, RPC·저장 로그는 서버에서 확인합니다.
-
-| 증상 | 확인할 내용 |
+| Symptom | What to check |
 | --- | --- |
-| Pairing Code 오류로 설치 중단 | `sudo dpkg --configure autobricks-truelog-cli`로 코드를 다시 입력 |
-| 접속 실패 | 서버 실행 상태, 서버·클라이언트 모드 일치, 목적지 주소·포트, 네트워크 허용 여부 |
-| mTLS 인증 오류 | 서버 주소와 인증서의 이름/IP 일치, 인증서 유효성, 서버의 신뢰 체인 |
-| Unix 소켓 Permission denied | 실제 Node.js 실행 계정, 클라이언트 그룹 또는 ACL, 실행 프로세스의 갱신된 그룹 |
-| root 테스트는 되지만 Express는 실패 | Express의 실행 계정·프로세스 관리자·systemd 접근 제한 확인 |
-| `unmanaged service` | 데이터 디렉터리는 있지만 True Log 관리 상태가 없는지 확인. 자동 채택이나 체인 초기화로 우회하지 않음 |
-| 쓰기 타임아웃 | 서버 저장 여부가 불확실할 수 있으므로 이벤트 ID·기록·영수증을 대조 |
+| Installation stopped at pairing | Retry with `sudo dpkg --configure autobricks-truelog-cli`. |
+| Connection failure | Server state, matching modes, reachable destination address and port, network access. |
+| mTLS authentication failure | Certificate validity, trust chain, and server address matching the certificate's name/IP. |
+| Socket permission denied | Actual Node.js account, client group or ACL, and running process credentials. |
+| Root test succeeds but Express fails | Express account, process manager, group refresh, and service sandbox restrictions. |
+| `unmanaged service` | Data directory exists without matching management state; do not silently adopt it or reset its chain. |
+| Write timeout | Outcome may be uncertain; reconcile using the event ID and stored records. |
 
-## 10. 기존 Log 전환과 업그레이드
+## Transition from Autobricks Log
 
-**0.2.31의 `autobricks-log`에서 0.3.55의 `autobricks-truelog`로의 전환을 일반적인 동일 패키지 업그레이드로 취급하지 마세요.** 패키지명·실행 파일·서비스·명령 형식이 달라졌으며, 배포 패키지에 구 패키지를 자동 대체하는 `Conflicts/Replaces` 선언은 없습니다. 기존 시스템 위에 두 서버 패키지를 무조건 겹쳐 설치하는 절차는 검증되지 않았습니다.
+Autobricks Log 0.2.31 and True Log 0.3.55 have different package names, commands, services, and record-management behavior.
 
-새 설치는 별도 머신 또는 기존 서비스와 충돌하지 않는 환경에서 먼저 검증하세요. 기존 시스템 전환 전에는 다음을 확인해야 합니다.
+| Item | Log 0.2.31 | True Log 0.3.55 |
+| --- | --- | --- |
+| Server package | `autobricks-log` | `autobricks-truelog` |
+| Command | `ablog` | `ab-truelog` |
+| Storage services | `ab-worm.service`, `autobricks-log.service` | `ab-truelog.service` |
+| Remote application writes | Existing local syslog integration | Separate RPC service and `ab-truelog-cli` |
+| New daily files | `ablog-YYYY-MM-DD.log` | `truelog-YYYY-MM-DD.log` |
 
-1. 기존 설치 버전, 서비스, rsyslog 설정, SOURCE, 보존 정책 및 관리 상태를 파악하고 운영 정책에 맞게 보전합니다.
-2. 로그 생산자·큐를 포함한 전환 시간을 계획합니다. 기존 서비스와 새 서비스를 같은 마운트·설정·저장소에 동시에 실행하지 않습니다.
-3. 이전 명령과 rsyslog 경로를 새 명령으로 전환하고 실제 서비스 계정의 권한을 확인합니다.
-4. 관리 상태와 데이터가 일치하는지, 기존 체인을 계속할 수 있는지 확인합니다. 단순히 파일을 복사하거나 기존 디렉터리를 지정한다고 True Log 체인이 생기지는 않습니다.
-5. 서버 점검과 시험 쓰기·영수증·상태·체크섬 검증을 마친 뒤 운영 트래픽을 전환합니다.
+Do not treat changing products as a routine same-package upgrade. The True Log package does not declare an automatic `Conflicts/Replaces` transition from the old Log package. Installing both server packages over the same storage and settings is not a verified migration procedure.
 
-호환 관리 상태가 있는 기존 체인의 `ablog-*.log`는 이름을 바꾸거나 덮어쓰지 않습니다. 활성 legacy 파일을 해당 일자에 계속 사용하고, 다음 일별 회전부터 `truelog-*.log` 이름으로 체인을 이어갑니다. 이는 관리 상태 없는 임의의 구 로그를 자동 채택한다는 뜻이 아닙니다.
+Before a transition:
 
-이미 True Log 패키지를 사용하는 경우에는 설정과 상태를 유지한 채 일치하는 새 `.deb`로 업그레이드합니다. 같은 서버의 기존 클라이언트 인증서를 재사용할 때는 Pairing Code를 비워둘 수 있습니다. 이전 클라이언트 설정 디렉터리를 사용하는 버전에서의 자동 설정·인증서 이전은 별도 확인이 필요합니다.
+1. Identify and preserve the installed version, service configuration, rsyslog queues, SOURCE, retention settings, and management state.
+2. Plan the logging handoff. Do not run old and new services concurrently against the same mount and settings.
+3. Update producer commands and rsyslog paths and verify the runtime account's access.
+4. Check that stored data and management state are compatible. Copying files or pointing at an existing directory does not create a True Log chain.
+5. Verify a test write, its receipt, chain state, and retained-file integrity before switching operational traffic.
 
-## 11. remove와 purge
+For a compatible managed chain, legacy `ablog-*.log` files are never renamed or overwritten. The active legacy file continues for its current day; the next daily file uses the new prefix while preserving the chain. This is not automatic adoption of unmanaged old logs.
 
-| 작업 | 서버 동작 |
+For an existing True Log installation, use the matching new package while preserving settings and state. A client may reuse certificates for the same server by leaving the Pairing Code blank. Automatic migration from older client configuration directories requires separate verification.
+
+## Remove, purge, and reinstall
+
+The following applies to the **True Log server package**, not the old Log package.
+
+| Command | Effect |
 | --- | --- |
-| `sudo apt remove autobricks-truelog` | 프로그램과 서비스를 제거하고 설정·관리 상태·SOURCE를 보존합니다. 데이터와 상태가 일치하면 재설치 후 체인을 이어갈 수 있습니다. |
-| `sudo apt purge autobricks-truelog` | 서버 설정·TLS 자료와 True Log 활성/대기/이력 관리 상태를 제거합니다. SOURCE·저장된 로그 바이트·WORM 메타데이터 및 별도 클라이언트 설정은 보존합니다. |
+| `sudo apt remove autobricks-truelog` | Stops and removes program services, preserving configuration, management state, and SOURCE. Matching data and state allow chains to resume after reinstallation. |
+| `sudo apt purge autobricks-truelog` | Also removes server settings, TLS material, and active/pending/history management state. Preserves SOURCE, stored bytes, WORM metadata, and separately installed client settings. |
 
-**체인을 이어갈 재설치에는 purge를 사용하지 마세요.** purge 후 데이터 디렉터리만 남은 서비스는 비어 있어도 `unmanaged service`로 거부됩니다. 보관 데이터를 삭제하거나 체인을 초기화하여 해결하지 말고, 새 로그에는 승인된 새 서비스 이름을 사용하세요. 바이트가 남아 있다는 사실만으로 삭제된 체인 이력과 검증 상태가 복구되지는 않습니다.
+Do not purge when the intention is to reinstall and continue the same chain. After purge, a remaining service directory is unmanaged even if empty. Use an approved new service name for new logs; do not delete retained data or reset chains to bypass the check.
 
-이 설명은 True Log 0.3.55 서버의 제거 정책입니다. 구 `autobricks-log` 패키지를 purge하면 해당 구버전의 제거 스크립트가 실행되므로 같은 보존 동작을 가정하지 마세요. 클라이언트 패키지를 purge하면 클라이언트 설정·인증서·저장된 소켓 사용자 설정이 제거됩니다.
+Purging an older Log package executes that package's own removal script. Do not assume it follows the True Log policy. Purging the client package removes its configuration, certificates, and saved socket-user setting.
 
-## 12. 플랫폼 이용 안내
+## Platform use
 
-0.3.55 패키지는 Ubuntu 22.04·24.04의 amd64·arm64용으로 구분됩니다. 각 머신의 운영체제와 아키텍처에 맞는 파일을 선택하세요. Ubuntu 24.04와 ARM64의 실제 설치·실행, 서버·클라이언트 동시 설치 및 mTLS 원격 쓰기부터 저장까지의 전체 동작은 운영 투입 전에 배포 환경에서 확인해야 합니다.
+Packages are provided for Ubuntu 22.04 and 24.04 on amd64 and arm64. Select the correct file for each machine. Actual installation and operation on Ubuntu 24.04 and ARM64, server/client coexistence, and the complete mTLS remote-write-to-storage path still require validation in the deployment environment.
 
-추가 상세 자료는 설치된 서버의 `/usr/share/doc/autobricks-truelog/` 아래 `INSTALL.md`, `RPC.md`, `INTEGRATION.md`, `HOWTO.md`에서 확인할 수 있습니다. 클라이언트에는 `/usr/share/doc/autobricks-truelog-cli/RPC.md`가 포함됩니다.
+Installed server reference documents are under `/usr/share/doc/autobricks-truelog/`. The client includes `/usr/share/doc/autobricks-truelog-cli/RPC.md`.
